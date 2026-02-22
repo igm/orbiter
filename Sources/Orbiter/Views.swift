@@ -141,7 +141,7 @@ struct SunburstChart: View {
                     animationProgress = 1
                 }
             }
-            .onChange(of: currentDirectory.id) { _ in
+            .onChange(of: currentDirectory.id) { _, _ in
                 expandedNodes.removeAll()
             }
         }
@@ -380,44 +380,6 @@ struct SliceView: View {
     }
 }
 
-// MARK: - Breadcrumb View
-
-struct BreadcrumbView: View {
-    let path: [FileNode]
-    let onSelect: (FileNode) -> Void
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                ForEach(Array(path.enumerated()), id: \.element.id) { index, node in
-                    if index > 0 {
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Button(action: { onSelect(node) }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: index == 0 ? "house.fill" : node.icon)
-                            Text(node.name)
-                                .lineLimit(1)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color(nsColor: .controlBackgroundColor))
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal)
-        }
-        .frame(height: 36)
-    }
-}
-
 // MARK: - File Info Panel
 
 struct FileInfoPanel: View {
@@ -597,5 +559,234 @@ struct EmptyStateView: View {
             .controlSize(.large)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Sidebar View
+
+struct SidebarView: View {
+    @Binding var navigationPath: [FileNode]
+    @Binding var selectedNode: FileNode?
+    let rootNode: FileNode?
+    let favorites: [URL]
+    let onScan: (URL) -> Void
+    let onAddFavorite: (URL) -> Void
+    let onRemoveFavorite: (URL) -> Void
+    let onSelectFolder: () -> Void
+
+    @State private var mountedVolumes: [URL] = []
+    @State private var expandedNodes: Set<UUID> = []
+
+    private static let defaultFavorites: [(name: String, icon: String, url: URL?)] = [
+        ("Home", "house.fill", FileManager.default.homeDirectoryForCurrentUser as URL?),
+        ("Desktop", "menubar.dock.rectangle", FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first),
+        ("Documents", "doc.fill", FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first),
+        ("Downloads", "arrow.down.circle.fill", FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first),
+        ("Applications", "app.dashed", URL(fileURLWithPath: "/Applications")),
+    ]
+
+    var body: some View {
+        List(selection: Binding(
+            get: { navigationPath.last?.id },
+            set: { newId in
+                guard let id = newId else { return }
+                if let node = findNode(withId: id, in: rootNode) {
+                    navigateToNode(node)
+                }
+            }
+        )) {
+            // Drives Section
+            Section("Drives") {
+                ForEach(mountedVolumes, id: \.self) { url in
+                    DriveRow(url: url, isFavorite: favorites.contains(url)) {
+                        onScan(url)
+                    } onAddFavorite: {
+                        onAddFavorite(url)
+                    } onRemoveFavorite: {
+                        onRemoveFavorite(url)
+                    }
+                }
+            }
+
+            // Favourites Section
+            Section("Favourites") {
+                ForEach(Self.defaultFavorites, id: \.name) { fav in
+                    if let url = fav.url {
+                        HStack(spacing: 8) {
+                            Image(systemName: fav.icon)
+                                .foregroundStyle(.blue)
+                                .frame(width: 16)
+                            Text(fav.name)
+                                .lineLimit(1)
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture { onScan(url) }
+                    }
+                }
+
+                // User-added favourites
+                ForEach(favorites, id: \.self) { url in
+                    FavoriteRow(url: url) {
+                        onRemoveFavorite(url)
+                    } onScan: {
+                        onScan(url)
+                    }
+                }
+            }
+
+            // Current Scan Section
+            if let root = rootNode {
+                Section("Current Scan") {
+                    OutlineGroup(root, children: \.children) { node in
+                        SidebarNodeRow(
+                            node: node,
+                            isSelected: navigationPath.last?.id == node.id,
+                            onSelect: { navigateToNode(node) },
+                            onAddFavorite: { onAddFavorite(node.url) }
+                        )
+                    }
+                }
+            }
+        }
+        .listStyle(.sidebar)
+        .onAppear { refreshVolumes() }
+        .contextMenu(forSelectionType: UUID.self) { items in
+            if let id = items.first,
+               let node = findNode(withId: id, in: rootNode) {
+                Button("Add to Favorites") {
+                    onAddFavorite(node.url)
+                }
+            }
+        }
+    }
+
+    private func refreshVolumes() {
+        var volumes: [URL] = [URL(fileURLWithPath: "/")]
+        if let mounted = FileManager.default.mountedVolumeURLs(
+            includingResourceValuesForKeys: [.localizedNameKey],
+            options: [.skipHiddenVolumes]
+        ) {
+            let external = mounted.filter {
+                $0.path != "/" && !$0.path.hasPrefix("/System/Volumes")
+            }
+            volumes.append(contentsOf: external)
+        }
+        mountedVolumes = volumes
+    }
+
+    private func navigateToNode(_ node: FileNode) {
+        var path: [FileNode] = []
+        _ = buildPath(to: node, from: rootNode, path: &path)
+        navigationPath = path
+        selectedNode = node
+    }
+
+    private func buildPath(to target: FileNode, from current: FileNode?, path: inout [FileNode]) -> Bool {
+        guard let current = current else { return false }
+        path.append(current)
+        if current.id == target.id { return true }
+        for child in current.children ?? [] {
+            if buildPath(to: target, from: child, path: &path) { return true }
+        }
+        path.removeLast()
+        return false
+    }
+
+    private func findNode(withId id: UUID, in node: FileNode?) -> FileNode? {
+        guard let node = node else { return nil }
+        if node.id == id { return node }
+        for child in node.children ?? [] {
+            if let found = findNode(withId: id, in: child) { return found }
+        }
+        return nil
+    }
+}
+
+// MARK: - Sidebar Row Views
+
+struct DriveRow: View {
+    let url: URL
+    let isFavorite: Bool
+    let onScan: () -> Void
+    let onAddFavorite: () -> Void
+    let onRemoveFavorite: () -> Void
+
+    private var volumeName: String {
+        (try? url.resourceValues(forKeys: [.localizedNameKey]))?.localizedName ?? url.lastPathComponent
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "externaldrive.fill")
+                .foregroundStyle(.secondary)
+            Text(volumeName)
+                .lineLimit(1)
+            Spacer()
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { onScan() }
+        .contextMenu {
+            Button("Scan") { onScan() }
+            Divider()
+            if isFavorite {
+                Button("Remove from Favorites", role: .destructive) { onRemoveFavorite() }
+            } else {
+                Button("Add to Favorites") { onAddFavorite() }
+            }
+        }
+    }
+}
+
+struct FavoriteRow: View {
+    let url: URL
+    let onRemove: () -> Void
+    let onScan: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "star.fill")
+                .foregroundStyle(.yellow)
+            Text(url.lastPathComponent)
+                .lineLimit(1)
+            Spacer()
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { onScan() }
+        .contextMenu {
+            Button("Scan") { onScan() }
+            Divider()
+            Button("Remove from Favorites", role: .destructive) { onRemove() }
+        }
+    }
+}
+
+struct SidebarNodeRow: View {
+    let node: FileNode
+    let isSelected: Bool
+    let onSelect: () -> Void
+    let onAddFavorite: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: node.icon)
+                .foregroundStyle(isSelected ? .blue : .secondary)
+                .frame(width: 16)
+            Text(node.name)
+                .lineLimit(1)
+            Spacer()
+            Text(node.formattedSize)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { onSelect() }
+        .contextMenu {
+            Button("Add to Favorites") { onAddFavorite() }
+            if node.isDirectory {
+                Button("Open in Finder") {
+                    NSWorkspace.shared.open(node.url)
+                }
+            }
+        }
     }
 }

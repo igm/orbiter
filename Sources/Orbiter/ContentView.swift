@@ -5,6 +5,9 @@ struct ContentView: View {
     @State private var selectedNode: FileNode?
     @State private var navigationPath: [FileNode] = []
     @State private var showFolderPicker = false
+    @State private var favorites: [URL] = []
+
+    @AppStorage("favorites") private var favoritesData: Data = Data()
 
     private var currentDirectory: FileNode {
         if let last = navigationPath.last {
@@ -23,61 +26,60 @@ struct ContentView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Toolbar
-            ToolbarView(
-                isScanning: scanner.isScanning,
-                progress: scanner.scanProgress,
-                onSelectFolder: { showFolderPicker = true },
-                onGoBack: goBack,
-                canGoBack: navigationPath.count > 1
+        NavigationSplitView {
+            SidebarView(
+                navigationPath: $navigationPath,
+                selectedNode: $selectedNode,
+                rootNode: scanner.rootNode,
+                favorites: favorites,
+                onScan: scanURL,
+                onAddFavorite: addFavorite,
+                onRemoveFavorite: removeFavorite,
+                onSelectFolder: { showFolderPicker = true }
             )
+            .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 300)
+        } detail: {
+            VStack(spacing: 0) {
+                // Toolbar
+                ToolbarView(
+                    isScanning: scanner.isScanning,
+                    progress: scanner.scanProgress,
+                    onSelectFolder: { showFolderPicker = true },
+                    onGoBack: goBack,
+                    canGoBack: navigationPath.count > 1
+                )
 
-            // Breadcrumb
-            if !navigationPath.isEmpty {
-                BreadcrumbView(
-                    path: navigationPath,
-                    onSelect: { node in
-                        if let index = navigationPath.firstIndex(where: { $0.id == node.id }) {
-                            navigationPath = Array(navigationPath.prefix(through: index))
-                            selectedNode = nil
+                Divider()
+
+                // Main Content
+                HSplitView {
+                    // Chart Area
+                    Group {
+                        if let root = scanner.rootNode {
+                            SunburstChart(
+                                root: root,
+                                currentDirectory: currentDirectory,
+                                selectedNode: $selectedNode,
+                                onDrillDown: { node in
+                                    navigationPath.append(node)
+                                    selectedNode = nil
+                                }
+                            )
+                        } else if scanner.isScanning {
+                            ProgressView(scanner.scanProgress)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else {
+                            EmptyStateView(onSelectFolder: { showFolderPicker = true })
                         }
                     }
-                )
-                .padding(.vertical, 8)
-                .background(Color(nsColor: .windowBackgroundColor))
-            }
+                    .frame(minWidth: 500)
 
-            Divider()
-
-            // Main Content
-            HSplitView {
-                // Chart Area
-                Group {
-                    if let root = scanner.rootNode {
-                        SunburstChart(
-                            root: root,
-                            currentDirectory: currentDirectory,
-                            selectedNode: $selectedNode,
-                            onDrillDown: { node in
-                                navigationPath.append(node)
-                                selectedNode = nil
-                            }
-                        )
-                    } else if scanner.isScanning {
-                        ProgressView(scanner.scanProgress)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        EmptyStateView(onSelectFolder: { showFolderPicker = true })
-                    }
+                    // Info Panel
+                    FileInfoPanel(
+                        node: selectedNode ?? currentDirectory,
+                        onMoveToTrash: moveSelectedToTrash
+                    )
                 }
-                .frame(minWidth: 500)
-
-                // Info Panel
-                FileInfoPanel(
-                    node: selectedNode ?? currentDirectory,
-                    onMoveToTrash: moveSelectedToTrash
-                )
             }
         }
         .fileImporter(
@@ -88,15 +90,13 @@ struct ContentView: View {
             switch result {
             case .success(let urls):
                 if let url = urls.first {
-                    navigationPath = []
-                    selectedNode = nil
-                    scanner.scan(url: url)
+                    scanURL(url)
                 }
             case .failure(let error):
                 scanner.error = error
             }
         }
-        .onChange(of: scanner.rootNode) { newNode in
+        .onChange(of: scanner.rootNode) { oldValue, newNode in
             if let node = newNode, navigationPath.isEmpty {
                 navigationPath = [node]
             }
@@ -109,6 +109,7 @@ struct ContentView: View {
         } message: {
             Text(scanner.error?.localizedDescription ?? "Unknown error")
         }
+        .onAppear { loadFavorites() }
     }
 
     // MARK: - Actions
@@ -117,6 +118,12 @@ struct ContentView: View {
         guard navigationPath.count > 1 else { return }
         navigationPath.removeLast()
         selectedNode = nil
+    }
+
+    private func scanURL(_ url: URL) {
+        navigationPath = []
+        selectedNode = nil
+        scanner.scan(url: url)
     }
 
     private func moveSelectedToTrash() {
@@ -130,6 +137,32 @@ struct ContentView: View {
                 selectedNode = nil
             }
         }
+    }
+
+    // MARK: - Favorites
+
+    private func loadFavorites() {
+        if let decoded = try? JSONDecoder().decode([URL].self, from: favoritesData) {
+            favorites = decoded
+        }
+    }
+
+    private func saveFavorites() {
+        if let encoded = try? JSONEncoder().encode(favorites) {
+            favoritesData = encoded
+        }
+    }
+
+    private func addFavorite(_ url: URL) {
+        if !favorites.contains(url) {
+            favorites.append(url)
+            saveFavorites()
+        }
+    }
+
+    private func removeFavorite(_ url: URL) {
+        favorites.removeAll { $0 == url }
+        saveFavorites()
     }
 }
 

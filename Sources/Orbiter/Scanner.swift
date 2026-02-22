@@ -42,7 +42,7 @@ class FileScanner: ObservableObject {
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: url.path, isDirectory: &isDir) else { return nil }
 
-        let name = url.lastPathComponent
+        let name = (try? url.resourceValues(forKeys: [.localizedNameKey]).localizedName) ?? url.lastPathComponent
 
         if !isDir.boolValue {
             let values = try? url.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey])
@@ -72,7 +72,8 @@ class FileScanner: ObservableObject {
                     if let isPackage = try? itemURL.resourceValues(forKeys: [.isPackageKey]).isPackage,
                        isPackage {
                         let size = self.directorySize(at: itemURL)
-                        return FileNode(url: itemURL, name: itemURL.lastPathComponent,
+                        let pkgName = (try? itemURL.resourceValues(forKeys: [.localizedNameKey]).localizedName) ?? itemURL.lastPathComponent
+                        return FileNode(url: itemURL, name: pkgName,
                                         isDirectory: true, size: size, children: nil)
                     }
 
