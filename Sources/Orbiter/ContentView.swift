@@ -74,12 +74,10 @@ struct ContentView: View {
                 .frame(minWidth: 500)
 
                 // Info Panel
-                if let selected = selectedNode {
-                    FileInfoPanel(
-                        node: selected,
-                        onMoveToTrash: moveSelectedToTrash
-                    )
-                }
+                FileInfoPanel(
+                    node: selectedNode ?? currentDirectory,
+                    onMoveToTrash: moveSelectedToTrash
+                )
             }
         }
         .fileImporter(
