@@ -1,0 +1,25 @@
+# Build artifacts
+.build/
+.swiftpm/
+
+# Xcode
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+xcuserdata/
+*.xcworkspace/*
+!*.xcworkspace/contents.xcworkspacedata
+DerivedData/
+
+# Swift Package Manager
+Packages/
+*.xcodeproj
+
+# OS files
+.DS_Store
+*.swp
+*~
+
+# Secrets
+.env
+.env.*
