@@ -44,6 +44,7 @@ struct ContentView: View {
                 ToolbarView(
                     isScanning: scanner.isScanning,
                     progress: scanner.scanProgress,
+                    progressFraction: scanner.progressFraction,
                     onSelectFolder: { showFolderPicker = true },
                     onGoBack: goBack,
                     canGoBack: navigationPath.count > 1
@@ -66,8 +67,17 @@ struct ContentView: View {
                                 }
                             )
                         } else if scanner.isScanning {
-                            ProgressView(scanner.scanProgress)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            VStack(spacing: 16) {
+                                ProgressView(value: scanner.progressFraction)
+                                    .frame(width: 200)
+                                Text("\(Int(scanner.progressFraction * 100))%")
+                                    .font(.title2.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                                Text(scanner.scanProgress)
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                         } else {
                             EmptyStateView(onSelectFolder: { showFolderPicker = true })
                         }

@@ -500,6 +500,7 @@ struct FileInfoPanel: View {
 struct ToolbarView: View {
     let isScanning: Bool
     let progress: String
+    let progressFraction: Double
     let onSelectFolder: () -> Void
     let onGoBack: () -> Void
     let canGoBack: Bool
@@ -519,11 +520,18 @@ struct ToolbarView: View {
             Spacer()
 
             if isScanning {
-                ProgressView()
-                    .scaleEffect(0.7)
                 Text(progress)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                ProgressView(value: progressFraction)
+                    .frame(width: 120)
+
+                Text("\(Int(progressFraction * 100))%")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 36, alignment: .trailing)
             }
         }
         .padding()

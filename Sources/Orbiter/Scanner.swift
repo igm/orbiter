@@ -1,10 +1,19 @@
 import Foundation
 
+private actor ProgressCounter {
+    private var count = 0
+    func increment() -> Int {
+        count += 1
+        return count
+    }
+}
+
 @MainActor
 class FileScanner: ObservableObject {
     @Published var rootNode: FileNode?
     @Published var isScanning = false
     @Published var scanProgress: String = ""
+    @Published var progressFraction: Double = 0
     @Published var error: Error?
 
     private var scanningTask: Task<FileNode?, Never>?
@@ -15,6 +24,7 @@ class FileScanner: ObservableObject {
         scanningTask = Task {
             isScanning = true
             scanProgress = "Starting scan..."
+            progressFraction = 0
             error = nil
 
             let node = await scanDirectory(url: url, depth: 0)
@@ -24,6 +34,7 @@ class FileScanner: ObservableObject {
                 rootNode = node
                 isScanning = false
                 scanProgress = ""
+                progressFraction = 1.0
             }
 
             return node
@@ -35,6 +46,7 @@ class FileScanner: ObservableObject {
         scanningTask = nil
         isScanning = false
         scanProgress = ""
+        progressFraction = 0
     }
 
     private nonisolated func scanDirectory(url: URL, depth: Int) async -> FileNode? {
@@ -50,9 +62,6 @@ class FileScanner: ObservableObject {
             return FileNode(url: url, name: name, isDirectory: false, size: size, children: nil)
         }
 
-        if depth <= 2 {
-            await MainActor.run { scanProgress = "Scanning: \(name)" }
-        }
 
         guard let contents = try? fm.contentsOfDirectory(
             at: url,
@@ -64,20 +73,39 @@ class FileScanner: ObservableObject {
 
         if Task.isCancelled { return nil }
 
+        let isRoot = depth == 0
+        let totalItems = contents.count
+        let completed: ProgressCounter? = isRoot ? ProgressCounter() : nil
+
         return await withTaskGroup(of: FileNode?.self, returning: FileNode?.self) { group in
             for itemURL in contents {
                 group.addTask {
                     if Task.isCancelled { return nil }
 
+                    let result: FileNode?
                     if let isPackage = try? itemURL.resourceValues(forKeys: [.isPackageKey]).isPackage,
                        isPackage {
                         let size = self.directorySize(at: itemURL)
                         let pkgName = (try? itemURL.resourceValues(forKeys: [.localizedNameKey]).localizedName) ?? itemURL.lastPathComponent
-                        return FileNode(url: itemURL, name: pkgName,
+                        result = FileNode(url: itemURL, name: pkgName,
                                         isDirectory: true, size: size, children: nil)
+                    } else {
+                        result = await self.scanDirectory(url: itemURL, depth: depth + 1)
                     }
 
-                    return await self.scanDirectory(url: itemURL, depth: depth + 1)
+                    if isRoot, let counter = completed {
+                        let itemName = result?.name ?? itemURL.lastPathComponent
+                        let count = await counter.increment()
+                        let fraction = Double(count) / Double(totalItems)
+                        await MainActor.run {
+                            if fraction > self.progressFraction {
+                                self.progressFraction = fraction
+                                self.scanProgress = itemName
+                            }
+                        }
+                    }
+
+                    return result
                 }
             }
 
