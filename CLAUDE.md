@@ -9,14 +9,17 @@ Orbiter (DiskSpaceAnalyzer) is a macOS SwiftUI application that visualizes disk 
 ## Build Commands
 
 ```bash
-# Build the project
-swift build
-
-# Run the application
-swift run Orbiter
+# Generate Xcode project from project.yml
+xcodegen generate
 
 # Open in Xcode (recommended for development)
-open Package.swift
+open Orbiter.xcodeproj
+
+# Build via command line (SPM, no sandbox)
+swift build
+
+# Run via command line (SPM, no sandbox)
+swift run Orbiter
 ```
 
 ## Architecture
@@ -31,17 +34,24 @@ open Package.swift
 - **Concurrent Scanning**: Uses `withTaskGroup` for parallel directory traversal; packages (`.app`, `.dmg`) are sized via synchronous enumeration
 - **Navigation**: State-based breadcrumb navigation via `navigationPath: [FileNode]` array
 - **Chart Rendering**: Rings built lazily; beyond depth 3, nodes expand only when explicitly toggled via double-click
+- **App Sandbox**: Security-scoped URLs for file access; security-scoped bookmarks for persisting favorites across launches
+- **Xcode Project**: Generated via XcodeGen from `project.yml`; `.xcodeproj` is gitignored
 
 ### File Responsibilities
 | File | Purpose |
 |------|---------|
 | `OrbiterApp.swift` | App entry point, window configuration |
-| `Scanner.swift` | Async file system scanning, trash operations |
+| `Scanner.swift` | Async file system scanning, security-scoped resource access, trash operations |
 | `Models.swift` | `FileNode` tree model, `SliceData` for chart arcs |
-| `ContentView.swift` | Main layout, navigation, state coordination |
+| `ContentView.swift` | Main layout, navigation, state coordination, bookmark-based favorites |
 | `Views.swift` | All UI components: SunburstChart, CenterCircle, FileInfoPanel, etc. |
+| `project.yml` | XcodeGen spec for generating `Orbiter.xcodeproj` |
+| `Orbiter.entitlements` | App Sandbox, user-selected file access, app-scoped bookmarks |
+| `PrivacyInfo.xcprivacy` | Privacy manifest declaring FileTimestamp and DiskSpace API usage |
+| `Assets.xcassets` | App icon asset catalog |
 
 ## Platform Requirements
 - macOS 14.0+
 - Swift 5.9
 - SwiftUI (AppKit interop via `NSColor`, `NSWorkspace`)
+- XcodeGen (for project generation)
