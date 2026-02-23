@@ -12,7 +12,12 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Orbiter",
-            path: "Sources/Orbiter"
+            path: "Sources/Orbiter",
+            exclude: ["Orbiter.entitlements"],
+            resources: [
+                .process("Assets.xcassets"),
+                .copy("PrivacyInfo.xcprivacy")
+            ]
         )
     ]
 )

@@ -13,7 +13,13 @@ DerivedData/
 
 # Swift Package Manager
 Packages/
+
+# Xcode project (regenerate with: xcodegen generate)
 *.xcodeproj
+
+# AI image generation artifacts
+flux-output*.png
+icon_candidate*.png
 
 # OS files
 .DS_Store

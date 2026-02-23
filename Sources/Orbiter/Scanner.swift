@@ -17,9 +17,15 @@ class FileScanner: ObservableObject {
     @Published var error: Error?
 
     private var scanningTask: Task<FileNode?, Never>?
+    private var accessedURL: URL?
 
     func scan(url: URL) {
         cancelScan()
+
+        let granted = url.startAccessingSecurityScopedResource()
+        if granted {
+            accessedURL = url
+        }
 
         scanningTask = Task {
             isScanning = true
@@ -44,9 +50,15 @@ class FileScanner: ObservableObject {
     func cancelScan() {
         scanningTask?.cancel()
         scanningTask = nil
+        stopAccessingCurrentURL()
         isScanning = false
         scanProgress = ""
         progressFraction = 0
+    }
+
+    private func stopAccessingCurrentURL() {
+        accessedURL?.stopAccessingSecurityScopedResource()
+        accessedURL = nil
     }
 
     private nonisolated func scanDirectory(url: URL, depth: Int) async -> FileNode? {

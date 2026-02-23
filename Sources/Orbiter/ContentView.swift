@@ -149,16 +149,36 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Favorites
+    // MARK: - Favorites (Security-Scoped Bookmarks)
 
     private func loadFavorites() {
-        if let decoded = try? JSONDecoder().decode([URL].self, from: favoritesData) {
-            favorites = decoded
+        guard let bookmarks = try? JSONDecoder().decode([Data].self, from: favoritesData) else { return }
+        var resolved: [URL] = []
+        var needsResave = false
+        for bookmark in bookmarks {
+            var isStale = false
+            guard let url = try? URL(
+                resolvingBookmarkData: bookmark,
+                options: .withSecurityScope,
+                bookmarkDataIsStale: &isStale
+            ) else { continue }
+            if isStale { needsResave = true }
+            _ = url.startAccessingSecurityScopedResource()
+            resolved.append(url)
         }
+        favorites = resolved
+        if needsResave { saveFavorites() }
     }
 
     private func saveFavorites() {
-        if let encoded = try? JSONEncoder().encode(favorites) {
+        let bookmarks = favorites.compactMap { url -> Data? in
+            try? url.bookmarkData(
+                options: .withSecurityScope,
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+        }
+        if let encoded = try? JSONEncoder().encode(bookmarks) {
             favoritesData = encoded
         }
     }
@@ -171,6 +191,7 @@ struct ContentView: View {
     }
 
     private func removeFavorite(_ url: URL) {
+        url.stopAccessingSecurityScopedResource()
         favorites.removeAll { $0 == url }
         saveFavorites()
     }
