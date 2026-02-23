@@ -32,3 +32,4 @@ icon_candidate*.png
 # Secrets
 .env
 .env.*
+/.idea

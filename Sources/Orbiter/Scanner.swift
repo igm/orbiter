@@ -236,7 +236,28 @@ class TrashManager: ObservableObject {
 
     func addToTrash(_ node: FileNode) {
         guard !isDirectlyTrashed(node.url) else { return }
+        // If an ancestor is already trashed, this node is already covered
+        guard !hasTrashedAncestor(node.url) else { return }
+        // Remove any descendants that are trashed (they'll be covered by this parent)
+        removeDescendants(of: node.url)
         items.append(TrashItem(node: node, trashedAt: Date()))
+    }
+
+    private func hasTrashedAncestor(_ url: URL) -> Bool {
+        let path = url.standardizedFileURL.path
+        return items.contains { item in
+            let trashedPath = item.node.url.standardizedFileURL.path
+            // Check if this trashed item is an ancestor of the URL being added
+            return path.hasPrefix(trashedPath + "/")
+        }
+    }
+
+    private func removeDescendants(of url: URL) {
+        let path = url.standardizedFileURL.path
+        items.removeAll { item in
+            let itemPath = item.node.url.standardizedFileURL.path
+            return itemPath.hasPrefix(path + "/")
+        }
     }
 
     func removeFromTrash(_ item: TrashItem) {
