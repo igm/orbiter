@@ -72,3 +72,33 @@ struct SliceData: Identifiable {
     let depth: Int
     let colorIndex: Int
 }
+
+// MARK: - Volume Info
+
+struct VolumeInfo: Identifiable {
+    let id = UUID()
+    let url: URL
+    let name: String
+    let totalCapacity: Int64
+    let availableCapacity: Int64
+    let isRemovable: Bool
+    let isInternal: Bool
+
+    var usedCapacity: Int64 { totalCapacity - availableCapacity }
+
+    var usageFraction: Double {
+        guard totalCapacity > 0 else { return 0 }
+        return Double(usedCapacity) / Double(totalCapacity)
+    }
+
+    var formattedTotal: String { ByteCountFormatter.string(fromByteCount: totalCapacity, countStyle: .file) }
+    var formattedUsed: String { ByteCountFormatter.string(fromByteCount: usedCapacity, countStyle: .file) }
+    var formattedAvailable: String { ByteCountFormatter.string(fromByteCount: availableCapacity, countStyle: .file) }
+
+    var icon: String {
+        if url.path == "/" { return "internaldrive.fill" }
+        if isRemovable { return "externaldrive.fill" }
+        return "externaldrive.fill"
+    }
+}
+

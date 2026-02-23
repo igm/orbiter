@@ -151,6 +151,57 @@ class FileScanner: ObservableObject {
         return total
     }
 
+    // MARK: - Full Disk Access Detection
+
+    static var hasFullDiskAccess: Bool {
+        FileManager.default.isReadableFile(atPath: "/Library/Application Support/com.apple.TCC/TCC.db")
+    }
+
+    // MARK: - Volume Detection
+
+    static func mountedVolumes() -> [VolumeInfo] {
+        let fm = FileManager.default
+        var volumes: [VolumeInfo] = []
+        let keys: Set<URLResourceKey> = [
+            .volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityKey,
+            .volumeIsRemovableKey, .volumeIsInternalKey
+        ]
+
+        // Root volume
+        let rootURL = URL(fileURLWithPath: "/")
+        if let values = try? rootURL.resourceValues(forKeys: keys) {
+            volumes.append(VolumeInfo(
+                url: rootURL,
+                name: values.volumeName ?? "Macintosh HD",
+                totalCapacity: Int64(values.volumeTotalCapacity ?? 0),
+                availableCapacity: Int64(values.volumeAvailableCapacity ?? 0),
+                isRemovable: values.volumeIsRemovable ?? false,
+                isInternal: values.volumeIsInternal ?? true
+            ))
+        }
+
+        // External/other volumes
+        if let mounted = fm.mountedVolumeURLs(
+            includingResourceValuesForKeys: Array(keys),
+            options: [.skipHiddenVolumes]
+        ) {
+            for url in mounted where url.path != "/" && !url.path.hasPrefix("/System/Volumes") {
+                if let values = try? url.resourceValues(forKeys: keys) {
+                    volumes.append(VolumeInfo(
+                        url: url,
+                        name: values.volumeName ?? url.lastPathComponent,
+                        totalCapacity: Int64(values.volumeTotalCapacity ?? 0),
+                        availableCapacity: Int64(values.volumeAvailableCapacity ?? 0),
+                        isRemovable: values.volumeIsRemovable ?? false,
+                        isInternal: values.volumeIsInternal ?? true
+                    ))
+                }
+            }
+        }
+
+        return volumes
+    }
+
     func moveToTrash(node: FileNode) async -> Bool {
         let fileManager = FileManager.default
         do {

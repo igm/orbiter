@@ -56,10 +56,12 @@ struct SunburstChart: View {
     let currentDirectory: FileNode
     @Binding var selectedNode: FileNode?
     let onDrillDown: (FileNode) -> Void
+    let onMoveToTrash: (FileNode) -> Void
 
     @State private var hoveredNode: FileNode?
     @State private var animationProgress: CGFloat = 0
     @State private var expandedNodes: Set<UUID> = []
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let centerRadius: CGFloat = 0.18
     private let outerPadding: CGFloat = 0.02
@@ -83,25 +85,32 @@ struct SunburstChart: View {
             let rw = ringWidth(for: allRings.count)
 
             ZStack {
-                // Center circle
                 CenterCircle(
                     node: currentDirectory,
                     hoveredNode: hoveredNode,
                     selectedNode: selectedNode
                 )
 
-                // Render rings
                 ForEach(Array(allRings.enumerated()), id: \.offset) { ringIndex, slices in
                     ForEach(slices) { slice in
+                        let isExpandable = slice.node.isDirectory
+                            && slice.node.children?.isEmpty == false
+                            && slice.depth >= baseDepth - 1
+                            && !expandedNodes.contains(slice.node.id)
+
                         SliceView(
                             slice: slice,
                             ringIndex: ringIndex,
                             isHovered: hoveredNode?.id == slice.node.id,
                             isSelected: selectedNode?.id == slice.node.id,
+                            isExpandable: isExpandable,
                             animationProgress: animationProgress,
                             ringWidth: rw,
                             centerRadius: centerRadius
                         )
+                        .accessibilityElement()
+                        .accessibilityLabel("\(slice.node.name), \(slice.node.formattedSize)")
+                        .accessibilityHint(slice.node.isDirectory ? "Double-click to expand" : "")
                     }
                 }
             }
@@ -121,11 +130,11 @@ struct SunburstChart: View {
             .onTapGesture(count: 2) {
                 guard let node = hoveredNode, node.isDirectory else { return }
                 guard let children = node.children, !children.isEmpty else { return }
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    if expandedNodes.contains(node.id) {
-                        collapseNode(node)
-                    } else {
-                        expandedNodes.insert(node.id)
+                if reduceMotion {
+                    toggleExpansion(node)
+                } else {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        toggleExpansion(node)
                     }
                 }
             }
@@ -136,14 +145,44 @@ struct SunburstChart: View {
                     selectedNode = nil
                 }
             }
+            .contextMenu {
+                if let node = hoveredNode {
+                    Button("Open in Finder") {
+                        NSWorkspace.shared.open(node.isDirectory ? node.url : node.url.deletingLastPathComponent())
+                    }
+                    if node.isDirectory, let children = node.children, !children.isEmpty {
+                        Button("Expand") { onDrillDown(node) }
+                    }
+                    Button("Copy Path") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(node.url.path, forType: .string)
+                    }
+                    Divider()
+                    Button("Move to Trash", role: .destructive) {
+                        onMoveToTrash(node)
+                    }
+                }
+            }
             .onAppear {
-                withAnimation(.easeOut(duration: 0.6)) {
+                if reduceMotion {
                     animationProgress = 1
+                } else {
+                    withAnimation(.easeOut(duration: 0.6)) {
+                        animationProgress = 1
+                    }
                 }
             }
             .onChange(of: currentDirectory.id) { _, _ in
                 expandedNodes.removeAll()
             }
+        }
+    }
+
+    private func toggleExpansion(_ node: FileNode) {
+        if expandedNodes.contains(node.id) {
+            collapseNode(node)
+        } else {
+            expandedNodes.insert(node.id)
         }
     }
 
@@ -189,7 +228,6 @@ struct SunburstChart: View {
             return result
         }
 
-        // Ring 1: direct children span the full circle
         let firstRing = buildSlicesInArc(
             nodes: children,
             startAngle: .degrees(-90),
@@ -199,7 +237,6 @@ struct SunburstChart: View {
         )
         result.append(firstRing)
 
-        // Ring 2+: each child subdivides within its parent's arc
         var parentSlices = firstRing
         var depth = 1
         let hardCap = 10
@@ -208,7 +245,6 @@ struct SunburstChart: View {
             var ringSlices: [SliceData] = []
 
             for parent in parentSlices {
-                // Beyond base depth, only expand if explicitly expanded
                 if depth >= baseDepth && !expandedNodes.contains(parent.node.id) {
                     continue
                 }
@@ -248,7 +284,6 @@ struct SunburstChart: View {
         var currentAngle = startAngle
         var slices: [SliceData] = []
 
-        // Offset child colors so siblings of different parents don't start on the same hue
         let colorOffset = parentColorIndex.map { ($0 + 1) % colors.count } ?? 0
 
         for (index, node) in nodes.enumerated() {
@@ -343,6 +378,7 @@ struct SliceView: View {
     let ringIndex: Int
     let isHovered: Bool
     let isSelected: Bool
+    let isExpandable: Bool
     let animationProgress: CGFloat
     let ringWidth: CGFloat
     let centerRadius: CGFloat
@@ -373,6 +409,19 @@ struct SliceView: View {
                     lineWidth: isSelected ? 2.5 : isHovered ? 1.5 : 1
                 )
             )
+            .overlay(
+                Group {
+                    if isExpandable {
+                        SunburstSlice(
+                            startAngle: slice.startAngle,
+                            endAngle: slice.endAngle,
+                            innerRadius: outerR - 0.005,
+                            outerRadius: outerR
+                        )
+                        .fill(Color.primary.opacity(isHovered ? 0.3 : 0.12))
+                    }
+                }
+            )
             .scaleEffect(isHovered ? 1.02 : 1.0)
             .opacity(animationProgress)
             .allowsHitTesting(false)
@@ -390,7 +439,6 @@ struct FileInfoPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Header
             HStack {
                 Image(systemName: node.icon)
                     .font(.largeTitle)
@@ -409,7 +457,6 @@ struct FileInfoPanel: View {
 
             Divider()
 
-            // Size Info
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Size")
@@ -441,7 +488,6 @@ struct FileInfoPanel: View {
 
             Divider()
 
-            // Path
             VStack(alignment: .leading, spacing: 4) {
                 Text("Path")
                     .font(.caption)
@@ -456,7 +502,6 @@ struct FileInfoPanel: View {
 
             Spacer()
 
-            // Actions
             VStack(spacing: 8) {
                 if node.isDirectory {
                     Button(action: {
@@ -501,21 +546,21 @@ struct ToolbarView: View {
     let isScanning: Bool
     let progress: String
     let progressFraction: Double
+    let navigationPath: [FileNode]
     let onSelectFolder: () -> Void
-    let onGoBack: () -> Void
-    let canGoBack: Bool
+    let onNavigate: (Int) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            Button(action: onGoBack) {
-                Image(systemName: "chevron.left")
-            }
-            .disabled(!canGoBack || isScanning)
-
             Button(action: onSelectFolder) {
-                Label("Select Folder", systemImage: "folder.badge.plus")
+                Image(systemName: "folder.badge.plus")
             }
             .disabled(isScanning)
+
+            if !navigationPath.isEmpty {
+                Divider().frame(height: 16)
+                BreadcrumbView(path: navigationPath, onNavigate: onNavigate)
+            }
 
             Spacer()
 
@@ -534,267 +579,152 @@ struct ToolbarView: View {
                     .frame(width: 36, alignment: .trailing)
             }
         }
-        .padding()
+        .padding(.horizontal)
+        .padding(.vertical, 8)
         .background(Color(nsColor: .controlBackgroundColor))
     }
 }
 
-// MARK: - Empty State
+// MARK: - Breadcrumb View
 
-struct EmptyStateView: View {
+struct BreadcrumbView: View {
+    let path: [FileNode]
+    let onNavigate: (Int) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                ForEach(Array(path.enumerated()), id: \.element.id) { index, node in
+                    if index > 0 {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2)
+                            .foregroundStyle(.quaternary)
+                    }
+
+                    Button(action: { onNavigate(index) }) {
+                        Text(node.name)
+                            .font(.subheadline)
+                            .fontWeight(index == path.count - 1 ? .semibold : .regular)
+                            .foregroundStyle(index == path.count - 1 ? .primary : .secondary)
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(index == path.count - 1)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Disk Selection View
+
+struct DiskSelectionView: View {
+    let volumes: [VolumeInfo]
+    let hasFullDiskAccess: Bool
+    let onScan: (URL) -> Void
     let onSelectFolder: () -> Void
 
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "externaldrive.fill.badge.icloud")
-                .font(.system(size: 64))
+        VStack(spacing: 0) {
+            Spacer()
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 260, maximum: 320))], spacing: 16) {
+                ForEach(volumes) { volume in
+                    VolumeCard(volume: volume, onScan: { onScan(volume.url) })
+                }
+            }
+            .padding(.horizontal, 48)
+
+            Spacer()
+
+            VStack(spacing: 12) {
+                Button(action: onSelectFolder) {
+                    Label("Select Folder…", systemImage: "folder.badge.plus")
+                }
+                .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
 
-            VStack(spacing: 8) {
-                Text("Disk Space Analyzer")
-                    .font(.title2)
-                    .fontWeight(.medium)
-
-                Text("Select a folder to visualize its contents")
+                if !hasFullDiskAccess {
+                    HStack(spacing: 6) {
+                        Image(systemName: "lock.shield")
+                            .font(.caption)
+                        Text("Grant Full Disk Access in System Settings for complete scanning")
+                            .font(.caption)
+                        Button("Open Settings…") {
+                            NSWorkspace.shared.open(
+                                URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!
+                            )
+                        }
+                        .font(.caption)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.blue)
+                    }
                     .foregroundStyle(.secondary)
+                }
             }
-
-            Button(action: onSelectFolder) {
-                Label("Select Folder", systemImage: "folder.badge.plus")
-                    .padding(.horizontal, 20)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
+            .padding(.bottom, 32)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-// MARK: - Sidebar View
-
-struct SidebarView: View {
-    @Binding var navigationPath: [FileNode]
-    @Binding var selectedNode: FileNode?
-    let rootNode: FileNode?
-    let favorites: [URL]
-    let onScan: (URL) -> Void
-    let onAddFavorite: (URL) -> Void
-    let onRemoveFavorite: (URL) -> Void
-    let onSelectFolder: () -> Void
-
-    @State private var mountedVolumes: [URL] = []
-    @State private var expandedNodes: Set<UUID> = []
-
-    private static let defaultFavorites: [(name: String, icon: String, url: URL?)] = [
-        ("Home", "house.fill", FileManager.default.homeDirectoryForCurrentUser as URL?),
-        ("Desktop", "menubar.dock.rectangle", FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first),
-        ("Documents", "doc.fill", FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first),
-        ("Downloads", "arrow.down.circle.fill", FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first),
-        ("Applications", "app.dashed", URL(fileURLWithPath: "/Applications")),
-    ]
-
-    var body: some View {
-        List(selection: Binding(
-            get: { navigationPath.last?.id },
-            set: { newId in
-                guard let id = newId else { return }
-                if let node = findNode(withId: id, in: rootNode) {
-                    navigateToNode(node)
-                }
-            }
-        )) {
-            // Drives Section
-            Section("Drives") {
-                ForEach(mountedVolumes, id: \.self) { url in
-                    DriveRow(url: url, isFavorite: favorites.contains(url)) {
-                        onScan(url)
-                    } onAddFavorite: {
-                        onAddFavorite(url)
-                    } onRemoveFavorite: {
-                        onRemoveFavorite(url)
-                    }
-                }
-            }
-
-            // Favourites Section
-            Section("Favourites") {
-                ForEach(Self.defaultFavorites, id: \.name) { fav in
-                    if let url = fav.url {
-                        HStack(spacing: 8) {
-                            Image(systemName: fav.icon)
-                                .foregroundStyle(.blue)
-                                .frame(width: 16)
-                            Text(fav.name)
-                                .lineLimit(1)
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture { onScan(url) }
-                    }
-                }
-
-                // User-added favourites
-                ForEach(favorites, id: \.self) { url in
-                    FavoriteRow(url: url) {
-                        onRemoveFavorite(url)
-                    } onScan: {
-                        onScan(url)
-                    }
-                }
-            }
-
-            // Current Scan Section
-            if let root = rootNode {
-                Section("Current Scan") {
-                    OutlineGroup(root, children: \.children) { node in
-                        SidebarNodeRow(
-                            node: node,
-                            isSelected: navigationPath.last?.id == node.id,
-                            onSelect: { navigateToNode(node) },
-                            onAddFavorite: { onAddFavorite(node.url) }
-                        )
-                    }
-                }
-            }
-        }
-        .listStyle(.sidebar)
-        .onAppear { refreshVolumes() }
-        .contextMenu(forSelectionType: UUID.self) { items in
-            if let id = items.first,
-               let node = findNode(withId: id, in: rootNode) {
-                Button("Add to Favorites") {
-                    onAddFavorite(node.url)
-                }
-            }
-        }
-    }
-
-    private func refreshVolumes() {
-        var volumes: [URL] = [URL(fileURLWithPath: "/")]
-        if let mounted = FileManager.default.mountedVolumeURLs(
-            includingResourceValuesForKeys: [.localizedNameKey],
-            options: [.skipHiddenVolumes]
-        ) {
-            let external = mounted.filter {
-                $0.path != "/" && !$0.path.hasPrefix("/System/Volumes")
-            }
-            volumes.append(contentsOf: external)
-        }
-        mountedVolumes = volumes
-    }
-
-    private func navigateToNode(_ node: FileNode) {
-        var path: [FileNode] = []
-        _ = buildPath(to: node, from: rootNode, path: &path)
-        navigationPath = path
-        selectedNode = node
-    }
-
-    private func buildPath(to target: FileNode, from current: FileNode?, path: inout [FileNode]) -> Bool {
-        guard let current = current else { return false }
-        path.append(current)
-        if current.id == target.id { return true }
-        for child in current.children ?? [] {
-            if buildPath(to: target, from: child, path: &path) { return true }
-        }
-        path.removeLast()
-        return false
-    }
-
-    private func findNode(withId id: UUID, in node: FileNode?) -> FileNode? {
-        guard let node = node else { return nil }
-        if node.id == id { return node }
-        for child in node.children ?? [] {
-            if let found = findNode(withId: id, in: child) { return found }
-        }
-        return nil
-    }
-}
-
-// MARK: - Sidebar Row Views
-
-struct DriveRow: View {
-    let url: URL
-    let isFavorite: Bool
-    let onScan: () -> Void
-    let onAddFavorite: () -> Void
-    let onRemoveFavorite: () -> Void
-
-    private var volumeName: String {
-        (try? url.resourceValues(forKeys: [.localizedNameKey]))?.localizedName ?? url.lastPathComponent
-    }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "externaldrive.fill")
-                .foregroundStyle(.secondary)
-            Text(volumeName)
-                .lineLimit(1)
-            Spacer()
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { onScan() }
-        .contextMenu {
-            Button("Scan") { onScan() }
-            Divider()
-            if isFavorite {
-                Button("Remove from Favorites", role: .destructive) { onRemoveFavorite() }
-            } else {
-                Button("Add to Favorites") { onAddFavorite() }
-            }
-        }
-    }
-}
-
-struct FavoriteRow: View {
-    let url: URL
-    let onRemove: () -> Void
+struct VolumeCard: View {
+    let volume: VolumeInfo
     let onScan: () -> Void
 
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "star.fill")
-                .foregroundStyle(.yellow)
-            Text(url.lastPathComponent)
-                .lineLimit(1)
-            Spacer()
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { onScan() }
-        .contextMenu {
-            Button("Scan") { onScan() }
-            Divider()
-            Button("Remove from Favorites", role: .destructive) { onRemove() }
-        }
-    }
-}
-
-struct SidebarNodeRow: View {
-    let node: FileNode
-    let isSelected: Bool
-    let onSelect: () -> Void
-    let onAddFavorite: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: node.icon)
-                .foregroundStyle(isSelected ? .blue : .secondary)
-                .frame(width: 16)
-            Text(node.name)
-                .lineLimit(1)
-            Spacer()
-            Text(node.formattedSize)
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { onSelect() }
-        .contextMenu {
-            Button("Add to Favorites") { onAddFavorite() }
-            if node.isDirectory {
-                Button("Open in Finder") {
-                    NSWorkspace.shared.open(node.url)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: volume.icon)
+                    .font(.title2)
+                    .foregroundStyle(.blue)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(volume.name)
+                        .font(.headline)
+                    Text("\(volume.formattedAvailable) available of \(volume.formattedTotal)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color(nsColor: .separatorColor))
+
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(usageColor)
+                        .frame(width: geo.size.width * volume.usageFraction)
                 }
             }
+            .frame(height: 8)
+
+            Button(action: onScan) {
+                Text("Scan")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
         }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(nsColor: .controlBackgroundColor))
+                .shadow(color: .black.opacity(isHovered ? 0.15 : 0.05), radius: isHovered ? 8 : 4)
+        )
+        .scaleEffect(isHovered ? 1.02 : 1.0)
+        .animation(.easeOut(duration: 0.15), value: isHovered)
+        .onHover { isHovered = $0 }
+    }
+
+    private var usageColor: Color {
+        if volume.usageFraction > 0.9 { return .red }
+        if volume.usageFraction > 0.75 { return .orange }
+        return .blue
     }
 }
