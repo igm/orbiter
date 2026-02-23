@@ -1,6 +1,13 @@
-# Orbiter
+<p align="center">
+  <img src=".github/icon.png" width="128" height="128" alt="Orbiter">
+</p>
 
-A macOS disk space analyzer with an interactive sunburst chart visualization.
+<h1 align="center">Orbiter</h1>
+
+<p align="center">
+  <strong>See where your disk space goes.</strong><br>
+  A macOS disk space analyzer with an interactive sunburst chart.
+</p>
 
 ## Requirements
 
