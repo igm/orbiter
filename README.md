@@ -9,6 +9,10 @@
   A macOS disk space analyzer with an interactive sunburst chart.
 </p>
 
+<p align="center">
+  <img src=".github/screenshot.png" width="800" alt="Orbiter Screenshot">
+</p>
+
 ## Requirements
 
 - macOS 14.0+
