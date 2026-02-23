@@ -21,6 +21,9 @@ Packages/
 flux-output*.png
 icon_candidate*.png
 
+# Editor
+.vscode/
+
 # OS files
 .DS_Store
 *.swp
