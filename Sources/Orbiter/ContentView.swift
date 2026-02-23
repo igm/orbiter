@@ -3,6 +3,7 @@ import AppKit
 
 struct ContentView: View {
     @StateObject private var scanner = FileScanner()
+    @StateObject private var trashManager = TrashManager()
     @State private var selectedNode: FileNode?
     @State private var navigationPath: [FileNode] = []
     @State private var showFolderPicker = false
@@ -44,18 +45,35 @@ struct ContentView: View {
                         root: root,
                         currentDirectory: currentDirectory,
                         selectedNode: $selectedNode,
+                        trashManager: trashManager,
                         onDrillDown: { node in
                             navigationPath.append(node)
                             selectedNode = nil
-                        },
-                        onMoveToTrash: moveToTrash
+                        }
                     )
                     .frame(minWidth: 500)
 
-                    FileInfoPanel(
-                        node: selectedNode ?? currentDirectory,
-                        onMoveToTrash: moveSelectedToTrash
-                    )
+                    VStack(spacing: 0) {
+                        FileInfoPanel(
+                            node: selectedNode ?? currentDirectory,
+                            isInTrash: trashManager.isDirectlyTrashed((selectedNode ?? currentDirectory).url),
+                            isAncestorTrashed: trashManager.isAffectedByTrash((selectedNode ?? currentDirectory).url),
+                            onToggleTrash: {
+                                let node = selectedNode ?? currentDirectory
+                                trashManager.toggleTrash(node)
+                            },
+                            onSelectNode: { child in
+                                selectedNode = child
+                            }
+                        )
+
+                        Divider()
+
+                        TrashPanel(
+                            trashManager: trashManager,
+                            onPurge: purgeTrash
+                        )
+                    }
                 }
             } else if scanner.isScanning {
                 VStack(spacing: 16) {
@@ -162,19 +180,13 @@ struct ContentView: View {
 
     // MARK: - Trash
 
-    private func moveSelectedToTrash() {
-        guard let node = selectedNode else { return }
-        moveToTrash(node)
-    }
-
-    private func moveToTrash(_ node: FileNode) {
+    private func purgeTrash() {
         Task {
-            if await scanner.moveToTrash(node: node) {
-                if let root = scanner.rootNode {
-                    navigationPath = []
-                    scanner.scan(url: root.url)
-                }
+            let _ = await trashManager.purgeAll()
+            if let root = scanner.rootNode {
+                navigationPath = []
                 selectedNode = nil
+                scanner.scan(url: root.url)
             }
         }
     }

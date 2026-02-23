@@ -49,14 +49,39 @@ struct SunburstSlice: Shape {
     }
 }
 
+// MARK: - Diagonal Stripes Pattern
+
+struct DiagonalStripes: View {
+    var spacing: CGFloat = 6
+    var lineWidth: CGFloat = 2
+
+    var body: some View {
+        GeometryReader { geo in
+            let size = max(geo.size.width, geo.size.height) * 2
+            Path { path in
+                var x: CGFloat = -size
+                while x < size * 2 {
+                    path.move(to: CGPoint(x: x, y: -size))
+                    path.addLine(to: CGPoint(x: x + size, y: size))
+                    x += spacing + lineWidth
+                }
+            }
+            .stroke(Color.white, lineWidth: lineWidth)
+            .frame(width: size, height: size)
+            .position(x: geo.size.width / 2, y: geo.size.height / 2)
+        }
+        .clipped()
+    }
+}
+
 // MARK: - Sunburst Chart
 
 struct SunburstChart: View {
     let root: FileNode
     let currentDirectory: FileNode
     @Binding var selectedNode: FileNode?
+    @ObservedObject var trashManager: TrashManager
     let onDrillDown: (FileNode) -> Void
-    let onMoveToTrash: (FileNode) -> Void
 
     @State private var hoveredNode: FileNode?
     @State private var animationProgress: CGFloat = 0
@@ -104,6 +129,7 @@ struct SunburstChart: View {
                             isHovered: hoveredNode?.id == slice.node.id,
                             isSelected: selectedNode?.id == slice.node.id,
                             isExpandable: isExpandable,
+                            isMarkedForDeletion: trashManager.isAffectedByTrash(slice.node.url),
                             animationProgress: animationProgress,
                             ringWidth: rw,
                             centerRadius: centerRadius
@@ -158,8 +184,14 @@ struct SunburstChart: View {
                         NSPasteboard.general.setString(node.url.path, forType: .string)
                     }
                     Divider()
-                    Button("Move to Trash", role: .destructive) {
-                        onMoveToTrash(node)
+                    if trashManager.isDirectlyTrashed(node.url) {
+                        Button("Remove from Trash") {
+                            trashManager.toggleTrash(node)
+                        }
+                    } else if !trashManager.isAffectedByTrash(node.url) {
+                        Button("Add to Trash", role: .destructive) {
+                            trashManager.toggleTrash(node)
+                        }
                     }
                 }
             }
@@ -379,6 +411,7 @@ struct SliceView: View {
     let isHovered: Bool
     let isSelected: Bool
     let isExpandable: Bool
+    let isMarkedForDeletion: Bool
     let animationProgress: CGFloat
     let ringWidth: CGFloat
     let centerRadius: CGFloat
@@ -422,6 +455,39 @@ struct SliceView: View {
                     }
                 }
             )
+            .overlay(
+                Group {
+                    if isMarkedForDeletion {
+                        // Desaturate wash
+                        SunburstSlice(
+                            startAngle: slice.startAngle,
+                            endAngle: slice.endAngle,
+                            innerRadius: innerR,
+                            outerRadius: outerR
+                        )
+                        .fill(Color(nsColor: .windowBackgroundColor).opacity(0.7))
+
+                        // Diagonal stripes
+                        SunburstSlice(
+                            startAngle: slice.startAngle,
+                            endAngle: slice.endAngle,
+                            innerRadius: innerR,
+                            outerRadius: outerR
+                        )
+                        .fill(.red.opacity(0.35))
+                        .mask(DiagonalStripes())
+
+                        // Red border
+                        SunburstSlice(
+                            startAngle: slice.startAngle,
+                            endAngle: slice.endAngle,
+                            innerRadius: innerR,
+                            outerRadius: outerR
+                        )
+                        .stroke(Color.red.opacity(0.6), lineWidth: 1.5)
+                    }
+                }
+            )
             .scaleEffect(isHovered ? 1.02 : 1.0)
             .opacity(animationProgress)
             .allowsHitTesting(false)
@@ -433,9 +499,15 @@ struct SliceView: View {
 
 struct FileInfoPanel: View {
     let node: FileNode
-    let onMoveToTrash: () -> Void
+    let isInTrash: Bool
+    let isAncestorTrashed: Bool
+    let onToggleTrash: () -> Void
+    let onSelectNode: (FileNode) -> Void
 
-    @State private var showDeleteConfirmation = false
+    private var largestChildren: [FileNode] {
+        guard let children = node.children else { return [] }
+        return Array(children.sorted { $0.size > $1.size }.prefix(5))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -486,6 +558,36 @@ struct FileInfoPanel: View {
             }
             .font(.subheadline)
 
+            if !largestChildren.isEmpty {
+                Divider()
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Largest Items")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    ForEach(largestChildren) { child in
+                        Button(action: { onSelectNode(child) }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: child.icon)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 14)
+                                Text(child.name)
+                                    .font(.caption)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Spacer()
+                                Text(child.formattedSize)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
             Divider()
 
             VStack(alignment: .leading, spacing: 4) {
@@ -513,29 +615,155 @@ struct FileInfoPanel: View {
                     .buttonStyle(.bordered)
                 }
 
-                Button(role: .destructive, action: {
-                    showDeleteConfirmation = true
-                }) {
-                    Label("Move to Trash", systemImage: "trash")
+                if isAncestorTrashed && !isInTrash {
+                    Label("Parent in Trash", systemImage: "trash")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
+                } else {
+                    Button(role: isInTrash ? nil : .destructive, action: onToggleTrash) {
+                        Label(
+                            isInTrash ? "Remove from Trash" : "Add to Trash",
+                            systemImage: isInTrash ? "arrow.uturn.backward" : "trash"
+                        )
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.bordered)
             }
         }
         .padding()
         .frame(width: 220)
         .background(Color(nsColor: .controlBackgroundColor))
+    }
+}
+
+// MARK: - Trash Panel
+
+struct TrashPanel: View {
+    @ObservedObject var trashManager: TrashManager
+    let onPurge: () -> Void
+
+    @State private var isExpanded = true
+    @State private var showPurgeConfirmation = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: { withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() } }) {
+                HStack(spacing: 8) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+
+                    Label("Trash", systemImage: "trash")
+                        .font(.subheadline.weight(.medium))
+
+                    if !trashManager.items.isEmpty {
+                        Text("\(trashManager.items.count)")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(.red))
+                    }
+
+                    Spacer()
+
+                    if !trashManager.items.isEmpty {
+                        Text(trashManager.formattedTotalSize)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal)
+            .padding(.vertical, 10)
+
+            if isExpanded {
+                Divider()
+
+                if trashManager.items.isEmpty {
+                    Text("No items staged for deletion")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 20)
+                } else {
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            ForEach(trashManager.items) { item in
+                                HStack(spacing: 8) {
+                                    Image(systemName: item.node.icon)
+                                        .font(.caption2)
+                                        .foregroundStyle(.red)
+                                        .frame(width: 14)
+
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(item.node.name)
+                                            .font(.caption)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                        Text(item.node.formattedSize)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    Spacer()
+
+                                    Button(action: { trashManager.removeFromTrash(item) }) {
+                                        Image(systemName: "xmark")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                                .padding(.horizontal)
+                                .padding(.vertical, 6)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 200)
+
+                    Divider()
+
+                    HStack(spacing: 8) {
+                        Button("Clear All") {
+                            trashManager.removeAll()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                        Spacer()
+
+                        Button(role: .destructive, action: {
+                            showPurgeConfirmation = true
+                        }) {
+                            Label("Empty Trash", systemImage: "trash.fill")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(trashManager.isPurging)
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+                }
+            }
+        }
+        .background(Color(nsColor: .controlBackgroundColor))
         .confirmationDialog(
-            "Move to Trash?",
-            isPresented: $showDeleteConfirmation,
-            presenting: node
-        ) { node in
-            Button("Move to Trash", role: .destructive) {
-                onMoveToTrash()
+            "Empty Trash?",
+            isPresented: $showPurgeConfirmation
+        ) {
+            Button("Move \(trashManager.items.count) items to system trash", role: .destructive) {
+                onPurge()
             }
             Button("Cancel", role: .cancel) {}
-        } message: { node in
-            Text("Are you sure you want to move '\(node.name)' to the trash?")
+        } message: {
+            Text("This will move \(trashManager.items.count) items (\(trashManager.formattedTotalSize)) to the system trash.")
         }
     }
 }

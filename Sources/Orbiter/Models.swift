@@ -73,6 +73,14 @@ struct SliceData: Identifiable {
     let colorIndex: Int
 }
 
+// MARK: - Trash Item
+
+struct TrashItem: Identifiable, Hashable {
+    let id = UUID()
+    let node: FileNode
+    let trashedAt: Date
+}
+
 // MARK: - Volume Info
 
 struct VolumeInfo: Identifiable {

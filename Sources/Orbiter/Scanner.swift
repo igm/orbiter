@@ -214,3 +214,75 @@ class FileScanner: ObservableObject {
         }
     }
 }
+
+// MARK: - Trash Manager
+
+@MainActor
+class TrashManager: ObservableObject {
+    @Published var items: [TrashItem] = []
+    @Published var isPurging = false
+
+    var totalSize: Int64 {
+        items.reduce(0) { $0 + $1.node.size }
+    }
+
+    var formattedTotalSize: String {
+        ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
+    }
+
+    var trashedURLs: Set<URL> {
+        Set(items.map(\.node.url))
+    }
+
+    func addToTrash(_ node: FileNode) {
+        guard !isDirectlyTrashed(node.url) else { return }
+        items.append(TrashItem(node: node, trashedAt: Date()))
+    }
+
+    func removeFromTrash(_ item: TrashItem) {
+        items.removeAll { $0.id == item.id }
+    }
+
+    func removeAll() {
+        items.removeAll()
+    }
+
+    func isDirectlyTrashed(_ url: URL) -> Bool {
+        trashedURLs.contains(url)
+    }
+
+    func isAffectedByTrash(_ url: URL) -> Bool {
+        let path = url.standardizedFileURL.path
+        return items.contains { item in
+            let trashedPath = item.node.url.standardizedFileURL.path
+            return path == trashedPath || path.hasPrefix(trashedPath + "/")
+        }
+    }
+
+    func toggleTrash(_ node: FileNode) {
+        if let existing = items.first(where: { $0.node.url == node.url }) {
+            removeFromTrash(existing)
+        } else {
+            addToTrash(node)
+        }
+    }
+
+    func purgeAll() async -> Bool {
+        isPurging = true
+        let fm = FileManager.default
+        var allSuccess = true
+
+        for item in items {
+            do {
+                var resultURL: NSURL?
+                try fm.trashItem(at: item.node.url, resultingItemURL: &resultURL)
+            } catch {
+                allSuccess = false
+            }
+        }
+
+        items.removeAll()
+        isPurging = false
+        return allSuccess
+    }
+}
